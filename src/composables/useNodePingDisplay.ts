@@ -1,5 +1,5 @@
 import type { MaybeRefOrGetter } from 'vue'
-import type { NodePingPerTaskStat } from '@/composables/useNodePingStats'
+import type { NodePingHistoryPoint, NodePingPerTaskStat } from '@/composables/useNodePingStats'
 import { computed, toValue } from 'vue'
 import { NODE_PING_BAR_COUNT, useNodePingStats } from '@/composables/useNodePingStats'
 import { useAppStore } from '@/stores/app'
@@ -20,6 +20,18 @@ export interface NodePingBar {
   key: string
   className: string
   tooltip: string
+}
+
+export interface NodePingStackRow {
+  stack: 'v4' | 'v6'
+  bars: NodePingBar[]
+}
+
+export interface NodePingStackPanel {
+  /** 两栈数值，如 24/25 ms */
+  display: string
+  tooltip: string
+  rows: NodePingStackRow[]
 }
 
 interface NodePingNetworkEntry {
@@ -123,26 +135,26 @@ export function useNodePingDisplay(
     enabled: pingStatsEnabled,
   })
 
-  function buildPingBars(metric: NodePingMetric): NodePingBar[] {
-    const points = pingStats.history.value
+  function buildPingBars(metric: NodePingMetric, points: NodePingHistoryPoint[] = pingStats.history.value, label = ''): NodePingBar[] {
     if (!points.length)
       return []
 
+    const prefix = label ? `${label} ` : ''
     return points.map((point, index) => {
       const value = point[metric]
 
       return {
-        key: `${point.time}-${index}`,
+        key: `${label}${point.time}-${index}`,
         className: value === null
           ? 'bg-muted-foreground/15'
           : metric === 'latency'
             ? getLatencyToneClass(value)
             : getLossToneClass(value),
         tooltip: value === null
-          ? `${formatDateTime(point.time, 'HH:mm:ss')} N/A`
+          ? `${prefix}${formatDateTime(point.time, 'HH:mm:ss')} N/A`
           : metric === 'latency'
-            ? `${formatDateTime(point.time, 'HH:mm:ss')}\n${Math.round(value)} ms`
-            : `${formatDateTime(point.time, 'HH:mm:ss')}\n${value.toFixed(1)}%`,
+            ? `${prefix}${formatDateTime(point.time, 'HH:mm:ss')}\n${Math.round(value)} ms`
+            : `${prefix}${formatDateTime(point.time, 'HH:mm:ss')}\n${value.toFixed(1)}%`,
       }
     })
   }
@@ -169,6 +181,30 @@ export function useNodePingDisplay(
   const lossBars = computed(() => buildPingBars('loss'))
   const latencyRenderBars = computed(() => latencyBars.value.length ? latencyBars.value : buildEmptyPingBars('latency'))
   const lossRenderBars = computed(() => lossBars.value.length ? lossBars.value : buildEmptyPingBars('loss'))
+
+  // 双栈节点：延迟 / 丢包面板拆成 IPv4、IPv6 两行
+  function buildStackPanel(metric: NodePingMetric): NodePingStackPanel | null {
+    const byStack = pingStats.stats.value.byStack
+    if (!byStack)
+      return null
+    const stacks = ['v4', 'v6'] as const
+    const format = (stack: 'v4' | 'v6') => metric === 'latency'
+      ? `${Math.round(byStack[stack].avgLatency)}`
+      : byStack[stack].avgLoss.toFixed(1)
+    const unit = metric === 'latency' ? ' ms' : '%'
+    const title = metric === 'latency' ? '平均延迟' : '平均丢包'
+    return {
+      display: `${format('v4')}/${format('v6')}${unit}`,
+      tooltip: stacks.map(stack => `${pingStackLabel(stack)} ${title} ${format(stack)}${unit}`).join('\n'),
+      rows: stacks.map(stack => ({
+        stack,
+        bars: buildPingBars(metric, byStack[stack].history, pingStackLabel(stack)),
+      })),
+    }
+  }
+
+  const latencyStackPanel = computed(() => buildStackPanel('latency'))
+  const lossStackPanel = computed(() => buildStackPanel('loss'))
 
   const latencyDisplay = computed(() => {
     if (pingStats.hasData.value)
@@ -254,6 +290,8 @@ export function useNodePingDisplay(
     lossDisplay,
     latencyPanelTooltip,
     lossPanelTooltip,
+    latencyStackPanel,
+    lossStackPanel,
     perTaskStats: pingStats.perTaskStats,
     topPingNetworks,
   }

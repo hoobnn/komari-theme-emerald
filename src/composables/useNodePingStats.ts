@@ -2,6 +2,7 @@ import type { MaybeRefOrGetter } from 'vue'
 import type { PublicPingTaskOrderItem } from '@/utils/pingTaskOrder'
 import { useThrottleFn } from '@vueuse/core'
 import { computed, onScopeDispose, ref, shallowRef, toValue, watch } from 'vue'
+import { parsePingTaskName } from '@/utils/pingStack'
 import {
 
   sortTasksByPublicOrder,
@@ -14,7 +15,15 @@ export interface NodePingHistoryPoint {
   loss: number | null
 }
 
+export interface NodePingStackStats {
+  avgLatency: number
+  avgLoss: number
+  history: NodePingHistoryPoint[]
+}
+
 export interface NodePingStatsState {
+  /** 节点同时有 v4 与 v6 数据时按协议栈拆分（无后缀任务归入 v4），否则为 null */
+  byStack: { v4: NodePingStackStats, v6: NodePingStackStats } | null
   avgLatency: number
   avgLoss: number
   avgVolatility: number
@@ -63,7 +72,7 @@ export interface NodePingPerTaskStat {
 }
 
 export const NODE_PING_BAR_COUNT = 10
-const CACHE_VERSION = 6
+const CACHE_VERSION = 7
 const CACHE_KEY_PREFIX = 'komari-theme-emerald:node-ping-stats'
 const FULL_LOSS_EPSILON = 1e-6
 const PING_RECORD_REFRESH_INTERVAL_MS = 60_000
@@ -76,6 +85,7 @@ interface TaskRecordSummary {
 
 function createEmptyStats(): NodePingStatsState {
   return {
+    byStack: null,
     avgLatency: 0,
     avgLoss: 0,
     avgVolatility: 0,
@@ -149,6 +159,7 @@ function isValidStatsState(value: unknown): value is NodePingStatsState {
     && Array.isArray(state.history)
     && state.history.every(isValidHistoryPoint)
     && Array.isArray(state.perTaskStats)
+    && (state.byStack === null || typeof state.byStack === 'object')
 }
 
 function readStatsCache(uuid: string, hours: number): NodePingStatsState | null {
@@ -375,7 +386,7 @@ function getPercentile(values: number[], percentile: number): number | null {
   return lowerValue + (upperValue - lowerValue) * (position - lowerIndex)
 }
 
-function buildStats(records: PingRecord[], tasks: PingTaskInfo[]): NodePingStatsState {
+function buildStats(records: PingRecord[], tasks: PingTaskInfo[], splitStacks = true): NodePingStatsState {
   const includedTaskIds = getIncludedTaskIds(records)
 
   if (!includedTaskIds.size)
@@ -440,7 +451,26 @@ function buildStats(records: PingRecord[], tasks: PingTaskInfo[]): NodePingStats
   })
     .sort((a, b) => (taskOrderMap.get(a.taskId) ?? 0) - (taskOrderMap.get(b.taskId) ?? 0))
 
+  let byStack: NodePingStatsState['byStack'] = null
+  if (splitStacks) {
+    const v6TaskIds = new Set(
+      perTaskStats.filter(stat => parsePingTaskName(stat.name).stack === 'v6').map(stat => stat.taskId),
+    )
+    if (v6TaskIds.size && v6TaskIds.size < perTaskStats.length) {
+      const pick = (state: NodePingStatsState): NodePingStackStats => ({
+        avgLatency: state.avgLatency,
+        avgLoss: state.avgLoss,
+        history: state.history,
+      })
+      byStack = {
+        v4: pick(buildStats(filteredRecords.filter(r => !v6TaskIds.has(r.task_id)), tasks, false)),
+        v6: pick(buildStats(filteredRecords.filter(r => v6TaskIds.has(r.task_id)), tasks, false)),
+      }
+    }
+  }
+
   return {
+    byStack,
     avgLatency,
     avgLoss,
     avgVolatility,
