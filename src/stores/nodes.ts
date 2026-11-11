@@ -1,4 +1,4 @@
-import type { Client, NodeStatus, NodeStatusPing } from '@/utils/rpc'
+import type { Client, NodeStatus, NodeStatusGpu, NodeStatusPing } from '@/utils/rpc'
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import { parseNodeGroups } from '@/utils/groupHelper'
@@ -45,6 +45,7 @@ export interface NodeData {
   time: string
   cpu: number
   gpu: number
+  gpu_detailed_info?: NodeStatusGpu[]
   ram: number
   swap: number
   load: number
@@ -72,6 +73,7 @@ interface StatusData {
   time: string
   cpu: number
   gpu: number
+  gpu_detailed_info?: NodeStatusGpu[]
   ram: number
   swap: number
   load: number
@@ -197,6 +199,7 @@ const useNodesStore = defineStore('nodes', () => {
       time: status.time,
       cpu: status.cpu,
       gpu: status.gpu,
+      gpu_detailed_info: status.gpu_detailed_info,
       ram: status.ram,
       swap: status.swap,
       load: status.load,
@@ -225,6 +228,7 @@ const useNodesStore = defineStore('nodes', () => {
       time: status.time,
       cpu: status.cpu,
       gpu: status.gpu,
+      gpu_detailed_info: status.gpu_detailed_info,
       ram: status.ram,
       swap: status.swap,
       load: status.load,
@@ -354,6 +358,7 @@ const useNodesStore = defineStore('nodes', () => {
           time: currentNode.time,
           cpu: currentNode.cpu,
           gpu: currentNode.gpu,
+          gpu_detailed_info: currentNode.gpu_detailed_info,
           ram: currentNode.ram,
           swap: currentNode.swap,
           load: currentNode.load,

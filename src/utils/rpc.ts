@@ -178,12 +178,23 @@ export interface NodeStatusPing {
   max: number
 }
 
+/** 单块 GPU 的实时详情（agent 开启 --gpu 时，getNodesLatestStatus 返回） */
+export interface NodeStatusGpu {
+  name: string
+  memory_total: number
+  memory_used: number
+  utilization: number
+  temperature: number
+}
+
 /** 节点状态 */
 export interface NodeStatus {
   client: string
   time: string
   cpu: number
   gpu: number
+  gpu_count?: number
+  gpu_detailed_info?: NodeStatusGpu[]
   ram: number
   ram_total: number
   swap: number

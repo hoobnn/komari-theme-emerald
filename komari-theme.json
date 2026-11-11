@@ -1,10 +1,10 @@
 {
-  "name": "Komari Emerald",
+  "name": "Komari Emerald GPU",
   "short": "Emerald",
-  "description": "An emerald theme for Komari",
-  "version": "1.0.16",
+  "description": "An emerald theme for Komari, with GPU charts (fork of Tokinx/komari-theme-emerald)",
+  "version": "1.0.16-gpu.1",
   "author": "Tokinx",
-  "url": "https://github.com/Tokinx/komari-theme-emerald",
+  "url": "https://github.com/hoobnn/komari-theme-emerald",
   "preview": "preview.png",
   "configuration": {
     "type": "managed",

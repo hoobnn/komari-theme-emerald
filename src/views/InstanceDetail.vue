@@ -174,11 +174,22 @@ const metricCards = computed<MetricCard[]>(() => {
   ]
 })
 
+// 有 GPU 详情时用真实型号（WSL 等环境的 gpu_name 只是虚拟 DRM 名），同型号多卡显示为「N × 型号」
+const gpuDisplayName = computed(() => {
+  const gpus = data.value?.gpu_detailed_info
+  if (!gpus?.length)
+    return data.value?.gpu_name || '-'
+  const counts = new Map<string, number>()
+  for (const gpu of gpus)
+    counts.set(gpu.name, (counts.get(gpu.name) ?? 0) + 1)
+  return Array.from(counts, ([name, count]) => count > 1 ? `${count} × ${name}` : name).join(' / ')
+})
+
 const hardwareInfo = computed<InfoItem[]>(() => [
   { label: 'CPU', value: data.value ? `${data.value.cpu_name} (x${data.value.cpu_cores})` : '-', icon: 'icon-park-outline:cpu' },
   { label: '架构', value: data.value?.arch ?? '-', icon: 'icon-park-outline:application-two' },
   { label: '虚拟化', value: data.value?.virtualization ?? '-', icon: 'icon-park-outline:server' },
-  { label: 'GPU', value: data.value?.gpu_name || '-', icon: 'icon-park-outline:video-one' },
+  { label: 'GPU', value: gpuDisplayName.value, icon: 'icon-park-outline:video-one' },
 ])
 
 const systemInfo = computed<InfoItem[]>(() => [

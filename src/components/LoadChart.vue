@@ -8,6 +8,7 @@ import { computed, onMounted, ref, shallowRef, watch } from 'vue'
 import VChart from 'vue-echarts'
 import { CardX } from '@/components/ui/card-x'
 import { Empty } from '@/components/ui/empty'
+import { ProgressThin } from '@/components/ui/progress-thin'
 import { Spinner } from '@/components/ui/spinner'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useBackgroundSurface } from '@/composables/useBackgroundSurface'
@@ -454,6 +455,82 @@ const cpuChartOption = computed(() => ({
   ],
 }))
 
+// ==================== GPU ====================
+
+// 各卡实时详情来自节点状态（getNodesLatestStatus.gpu_detailed_info）；面板只把聚合使用率写进历史记录
+const gpuDevices = computed(() => nodeInfo.value?.gpu_detailed_info ?? [])
+const hasGpu = computed(() => gpuDevices.value.length > 0 || remoteData.value.some(r => (r.gpu ?? 0) > 0))
+
+function gpuMemoryPercent(used: number, total: number): number {
+  return total > 0 ? (used / total) * 100 : 0
+}
+
+function gpuTempClass(temp: number): string {
+  if (temp >= 85)
+    return 'text-red-500'
+  if (temp >= 75)
+    return 'text-amber-500'
+  return ''
+}
+
+// GPU 图表（聚合使用率）
+const gpuChartOption = computed(() => ({
+  animation: false,
+  color: [chartColors.quinary],
+  tooltip: {
+    ...baseTooltipConfig.value,
+    formatter: (params: unknown) => {
+      const p = params as Array<{ dataIndex: number, value: number, color: string }>
+      const firstParam = p[0]
+      if (!firstParam)
+        return ''
+      const record = chartData.value[firstParam.dataIndex]
+      if (!record)
+        return ''
+
+      const timeStr = formatTimeForTooltip(record.time, selectedHours.value || 1)
+      const colorDot = `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${firstParam.color};margin-right:8px;flex-shrink:0"></span>`
+      let html = `<div style="font-weight:600;margin-bottom:6px;color:${chartThemeColors.value.textSecondary}">${timeStr}</div>`
+      html += '<div style="display:flex;flex-direction:column;gap:4px">'
+      html += `<div style="display:flex;align-items:center">${colorDot}<span>GPU</span><span style="margin-left:auto;font-weight:600;margin-left:16px">${firstParam.value?.toFixed(1) ?? '-'}%</span></div>`
+      html += '</div>'
+      return html
+    },
+  },
+  grid: chartMargin,
+  xAxis: baseXAxisConfig.value,
+  yAxis: {
+    ...baseYAxisConfig.value,
+    name: 'GPU %',
+    nameTextStyle: { color: chartThemeColors.value.textSecondary, padding: [0, 40, 0, 0] },
+    min: 0,
+    max: 100,
+    axisLabel: { ...baseYAxisConfig.value.axisLabel, formatter: '{value}%' },
+  },
+  series: [
+    {
+      name: 'GPU',
+      type: 'line',
+      data: chartData.value.map(r => r.gpu),
+      showSymbol: false,
+      lineStyle: { width: 1.5, color: chartColors.quinary, cap: 'round' as const },
+      areaStyle: {
+        color: {
+          type: 'linear',
+          x: 0,
+          y: 0,
+          x2: 0,
+          y2: 1,
+          colorStops: [
+            { offset: 0, color: 'rgba(96, 165, 250, 0.25)' },
+            { offset: 1, color: 'rgba(96, 165, 250, 0.02)' },
+          ],
+        },
+      },
+    },
+  ],
+}))
+
 // 内存图表
 const memoryChartOption = computed(() => ({
   animation: false,
@@ -891,6 +968,48 @@ onMounted(() => {
           </template>
           <div class="h-48">
             <VChart :option="cpuChartOption" autoresize />
+          </div>
+        </CardX>
+
+        <!-- GPU 卡片（仅有 GPU 数据的节点显示） -->
+        <CardX
+          v-if="hasGpu"
+          size="small"
+          class="border-none transition-all rounded-md"
+          :class="pickSurfaceClass('bg-background/60 hover:bg-background', 'bg-background/50 hover:bg-background backdrop-blur-xs')"
+        >
+          <template #header>
+            <div class="flex items-center justify-between">
+              <span class="text-base font-bold">GPU</span>
+              <div v-if="latestStatus?.gpu != null" class="text-xs flex gap-0.5 items-baseline">
+                <span>{{ latestStatus.gpu.toFixed(1) }}</span>
+                <span>%</span>
+              </div>
+              <span v-else>-</span>
+            </div>
+          </template>
+          <!-- 有设备详情时压缩图表高度，让单卡时与相邻卡片等高 -->
+          <div :class="gpuDevices.length ? 'h-38' : 'h-48'">
+            <VChart :option="gpuChartOption" autoresize />
+          </div>
+          <div v-if="gpuDevices.length" class="mt-2 flex flex-col gap-2">
+            <div v-for="(gpu, index) in gpuDevices" :key="index" class="flex flex-col gap-1 text-xs">
+              <div class="flex items-center justify-between gap-2">
+                <span class="truncate text-muted-foreground" :title="gpu.name">{{ gpu.name }}</span>
+                <div class="flex shrink-0 gap-2 items-baseline">
+                  <span>{{ gpu.utilization }}%</span>
+                  <span :class="gpuTempClass(gpu.temperature)">{{ gpu.temperature > 0 ? `${gpu.temperature}°C` : '-' }}</span>
+                </div>
+              </div>
+              <div class="flex items-center gap-2">
+                <ProgressThin
+                  :percentage="gpuMemoryPercent(gpu.memory_used, gpu.memory_total)"
+                  :status="gpuMemoryPercent(gpu.memory_used, gpu.memory_total) >= 90 ? 'warning' : 'info'"
+                  class="flex-1"
+                />
+                <span class="shrink-0 text-muted-foreground">显存 {{ formatBytes(gpu.memory_used) }} / {{ formatBytes(gpu.memory_total) }}</span>
+              </div>
+            </div>
           </div>
         </CardX>
 
