@@ -69,6 +69,7 @@ function openPingDialog() {
 <template>
   <CardX
     hoverable
+    content-class="flex flex-1 flex-col"
     class="node-card h-full w-full cursor-pointer border-none shadow-[0_0_0_1px] shadow-transparent transition-all duration-200 rounded-md bg-background/60 hover:bg-background hover:shadow-emerald-600/10 hover:shadow-[0_0_20px,0_0_0_1px] hover:-translate-y-0.5 hover:z-1"
     :class="[pickSurfaceClass('', 'backdrop-blur-sm'), !props.node.online && 'shadow-[0_0_0_1px] !shadow-red-600/20']"
     @click="emit('click')"
@@ -98,7 +99,8 @@ function openPingDialog() {
     </template>
 
     <template #default>
-      <div class="flex flex-col gap-3">
+      <!-- 同一行卡片等高：内容撑满，延迟区与标签贴底，单栈 / 双栈卡片的柱条和标签对齐 -->
+      <div class="flex flex-1 flex-col gap-3">
         <div class="gap-x-3 gap-y-1 grid grid-cols-2">
           <!-- CPU -->
           <div class="flex flex-col gap-1">
@@ -187,7 +189,7 @@ function openPingDialog() {
             </DataTooltip>
           </div>
         </div>
-        <div class="relative text-[11px] text-muted-foreground">
+        <div class="relative flex flex-1 flex-col text-[11px] text-muted-foreground">
           <div
             v-if="!props.node.online"
             class="absolute inset-0 z-10 flex flex-col items-center justify-center space-y-1"
@@ -195,7 +197,7 @@ function openPingDialog() {
             <span class="text-sm text-red-600">离线</span>
             <div>{{ offlineTime }}</div>
           </div>
-          <div class="flex flex-col gap-y-2" :class="[!props.node.online && 'blur-xs opacity-60 pointer-events-none']">
+          <div class="flex flex-1 flex-col gap-y-2" :class="[!props.node.online && 'blur-xs opacity-60 pointer-events-none']">
             <div class="flex items-center">
               <span class="truncate">
                 速率
@@ -240,7 +242,7 @@ function openPingDialog() {
             <template v-if="dualStack">
               <!-- 双栈：三网 / 延迟 / 丢包合成一张表，v4、v6 各一行 -->
               <div
-                class="grid items-center gap-x-2 gap-y-1 tabular-nums"
+                class="mt-auto grid items-center gap-x-2 gap-y-1 tabular-nums"
                 :style="{ gridTemplateColumns: `1.25rem repeat(${pingNetworkHeaders.length + 2}, minmax(0, 1fr))` }"
               >
                 <span />
@@ -289,7 +291,7 @@ function openPingDialog() {
               </div>
             </template>
             <template v-else>
-              <div class="flex items-center justify-between">
+              <div class="mt-auto flex items-center justify-between">
                 <span class="truncate">
                   三网
                 </span>
@@ -371,7 +373,8 @@ function openPingDialog() {
             </template>
           </div>
         </div>
-        <div v-if="customTags.length > 0" class="flex shrink-0 flex-wrap gap-1 items-center">
+        <!-- 没有标签也占一行高度，保证有无标签的卡片柱条对齐 -->
+        <div class="flex min-h-[22px] shrink-0 flex-wrap gap-1 items-center">
           <Badge
             v-for="(tag, index) in customTags" :key="index" variant="outline"
             class="!text-[11px] rounded text-muted-foreground border-muted-foreground/10 px-1.5"
