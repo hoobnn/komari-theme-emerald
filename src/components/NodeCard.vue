@@ -45,6 +45,7 @@ const {
   latencyStackPanel,
   lossStackPanel,
   topPingNetworks,
+  pingNetworkStackRows,
 } = useNodePingDisplay(() => props.node.uuid)
 
 const trafficUsedPercentage = computed(() => getTrafficUsedPercentage(props.node))
@@ -229,7 +230,27 @@ function openPingDialog() {
                 </span>
               </DataTooltip>
             </div>
-            <div class="flex items-center justify-between">
+            <div v-if="pingNetworkStackRows" class="flex items-start justify-between">
+              <span class="truncate">
+                三网
+              </span>
+              <div class="border-t-2 border-dotted border-gray-500/10 mx-2 flex-1 mt-2" />
+              <div
+                class="grid items-center gap-x-2.5 gap-y-0.5 tabular-nums"
+                :style="{ gridTemplateColumns: `auto repeat(${pingNetworkStackRows[0]!.cells.length}, minmax(0, auto))` }"
+              >
+                <template v-for="row in pingNetworkStackRows" :key="row.stack">
+                  <span class="text-[10px] leading-none text-muted-foreground/70">{{ row.stack }}</span>
+                  <DataTooltip
+                    v-for="cell in row.cells" :key="cell.key" placement="top" :content="cell.tooltip"
+                    content-class="whitespace-pre-wrap w-max px-1.5 !leading-[1.2] text-[11px]"
+                  >
+                    <span class="block text-right" :class="cell.toneClass">{{ cell.latency }}</span>
+                  </DataTooltip>
+                </template>
+              </div>
+            </div>
+            <div v-else class="flex items-center justify-between">
               <span class="truncate">
                 三网
               </span>
@@ -257,18 +278,18 @@ function openPingDialog() {
               <div
                 role="button" tabindex="0"
                 class="group/panel relative col-span-3 flex cursor-pointer flex-col text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                :class="latencyStackPanel ? 'h-8 gap-1.5' : 'h-6 gap-2'"
+                :class="latencyStackPanel ? 'h-10 gap-2' : 'h-6 gap-2'"
                 :title="latencyStackPanel?.tooltip ?? latencyPanelTooltip" :aria-label="`${props.node.name} 延迟`" @click.stop="openPingDialog"
                 @keydown.enter.stop.prevent="openPingDialog" @keydown.space.stop.prevent="openPingDialog"
               >
                 <div class="flex items-center justify-between text-[11px] leading-none relative">
                   <span class="text-muted-foreground">延迟</span>
                   <div class="border-t-2 border-dotted border-gray-500/10 mx-2 flex-1" />
-                  <span class="font-medium text-foreground/85">{{ latencyStackPanel?.display ?? latencyDisplay }}</span>
+                  <span v-if="!latencyStackPanel" class="font-medium text-foreground/85">{{ latencyDisplay }}</span>
                 </div>
-                <div v-if="latencyStackPanel" class="flex h-full flex-col gap-[2px]">
-                  <div v-for="row in latencyStackPanel.rows" :key="row.stack" class="flex min-h-0 flex-1 items-stretch gap-1">
-                    <span class="w-3 shrink-0 text-[8px] leading-none text-muted-foreground/70 self-center">{{ row.stack }}</span>
+                <div v-if="latencyStackPanel" class="flex h-full flex-col gap-[3px]">
+                  <div v-for="row in latencyStackPanel.rows" :key="row.stack" class="flex min-h-0 flex-1 items-stretch gap-1.5">
+                    <span class="w-3 shrink-0 self-center text-[10px] leading-none text-muted-foreground/70">{{ row.stack }}</span>
                     <div
                       class="grid flex-1 items-end gap-[1px]"
                       :style="{ gridTemplateColumns: `repeat(${row.bars.length}, minmax(0, 1fr))` }"
@@ -283,6 +304,7 @@ function openPingDialog() {
                         />
                       </DataTooltip>
                     </div>
+                    <span class="w-12 shrink-0 self-center text-right text-[11px] font-medium leading-none tabular-nums text-foreground/85">{{ row.value }}</span>
                   </div>
                 </div>
                 <div
@@ -305,18 +327,18 @@ function openPingDialog() {
               <div
                 role="button" tabindex="0"
                 class="group/panel relative col-span-3 flex cursor-pointer flex-col text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                :class="lossStackPanel ? 'h-8 gap-1.5' : 'h-6 gap-2'"
+                :class="lossStackPanel ? 'h-10 gap-2' : 'h-6 gap-2'"
                 :title="lossStackPanel?.tooltip ?? lossPanelTooltip" :aria-label="`${props.node.name} 丢包`" @click.stop="openPingDialog"
                 @keydown.enter.stop.prevent="openPingDialog" @keydown.space.stop.prevent="openPingDialog"
               >
                 <div class="flex items-center justify-between text-[11px] leading-none">
                   <span class="text-muted-foreground">丢包</span>
                   <div class="border-t-2 border-dotted border-gray-500/10 mx-2 flex-1" />
-                  <span class="font-medium text-foreground/85">{{ lossStackPanel?.display ?? lossDisplay }}</span>
+                  <span v-if="!lossStackPanel" class="font-medium text-foreground/85">{{ lossDisplay }}</span>
                 </div>
-                <div v-if="lossStackPanel" class="flex h-full flex-col gap-[2px]">
-                  <div v-for="row in lossStackPanel.rows" :key="row.stack" class="flex min-h-0 flex-1 items-stretch gap-1">
-                    <span class="w-3 shrink-0 text-[8px] leading-none text-muted-foreground/70 self-center">{{ row.stack }}</span>
+                <div v-if="lossStackPanel" class="flex h-full flex-col gap-[3px]">
+                  <div v-for="row in lossStackPanel.rows" :key="row.stack" class="flex min-h-0 flex-1 items-stretch gap-1.5">
+                    <span class="w-3 shrink-0 self-center text-[10px] leading-none text-muted-foreground/70">{{ row.stack }}</span>
                     <div
                       class="grid flex-1 items-end gap-[1px]"
                       :style="{ gridTemplateColumns: `repeat(${row.bars.length}, minmax(0, 1fr))` }"
@@ -331,6 +353,7 @@ function openPingDialog() {
                         />
                       </DataTooltip>
                     </div>
+                    <span class="w-12 shrink-0 self-center text-right text-[11px] font-medium leading-none tabular-nums text-foreground/85">{{ row.value }}</span>
                   </div>
                 </div>
                 <div

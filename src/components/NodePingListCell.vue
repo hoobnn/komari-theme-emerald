@@ -11,12 +11,28 @@ const {
   latencyRenderBars,
   lossRenderBars,
   topPingNetworks,
+  pingNetworkStackRows,
 } = useNodePingDisplay(() => props.uuid)
 </script>
 
 <template>
   <div class="flex flex-col">
-    <div v-if="topPingNetworks.length > 0" class="flex flex-row">
+    <div
+      v-if="pingNetworkStackRows"
+      class="grid w-max items-center gap-x-2 text-[10px] leading-tight tabular-nums"
+      :style="{ gridTemplateColumns: `auto repeat(${pingNetworkStackRows[0]!.cells.length}, auto)` }"
+    >
+      <template v-for="row in pingNetworkStackRows" :key="row.stack">
+        <span class="text-[9px] text-muted-foreground/70">{{ row.stack }}</span>
+        <DataTooltip
+          v-for="cell in row.cells" :key="cell.key" placement="top" :content="cell.tooltip"
+          content-class="whitespace-pre-wrap w-max px-1.5 !leading-[1.2] text-[11px]"
+        >
+          <span class="block text-right" :class="cell.toneClass">{{ cell.latency }}</span>
+        </DataTooltip>
+      </template>
+    </div>
+    <div v-else-if="topPingNetworks.length > 0" class="flex flex-row">
       <DataTooltip
         v-for="(net, index) in topPingNetworks" :key="net.name" placement="top"
         :content="net.tooltip"

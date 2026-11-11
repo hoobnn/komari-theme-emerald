@@ -24,14 +24,26 @@ export interface NodePingBar {
 
 export interface NodePingStackRow {
   stack: 'v4' | 'v6'
+  value: string
   bars: NodePingBar[]
 }
 
 export interface NodePingStackPanel {
-  /** 两栈数值，如 24/25 ms */
-  display: string
   tooltip: string
   rows: NodePingStackRow[]
+}
+
+export interface NodePingNetworkStackCell {
+  key: string
+  /** 不带单位的数值，缺失时为 -- */
+  latency: string
+  toneClass: string
+  tooltip: string
+}
+
+export interface NodePingNetworkStackRow {
+  stack: 'v4' | 'v6'
+  cells: NodePingNetworkStackCell[]
 }
 
 interface NodePingNetworkEntry {
@@ -194,10 +206,10 @@ export function useNodePingDisplay(
     const unit = metric === 'latency' ? ' ms' : '%'
     const title = metric === 'latency' ? '平均延迟' : '平均丢包'
     return {
-      display: `${format('v4')}/${format('v6')}${unit}`,
       tooltip: stacks.map(stack => `${pingStackLabel(stack)} ${title} ${format(stack)}${unit}`).join('\n'),
       rows: stacks.map(stack => ({
         stack,
+        value: `${format(stack)}${unit}`,
         bars: buildPingBars(metric, byStack[stack].history, pingStackLabel(stack)),
       })),
     }
@@ -244,14 +256,14 @@ export function useNodePingDisplay(
     return `平均丢包 ${pingStats.avgLoss.value.toFixed(1)}%${volatility}`
   })
 
-  const topPingNetworks = computed(() => {
+  const topPingGroups = computed(() => {
     // 先按双栈后缀把同一线路的 v4 / v6 合成一组，再按组取前 3 条
     const groups = groupPingTasksByStack(pingStats.perTaskStats.value, stat => stat.name)
     const configuredNames = appStore.pingNetworkOrder
 
     // 未配置自定义顺序时保持默认行为：按后台顺序取前 3 组
     if (!configuredNames.length)
-      return groups.slice(0, PING_NETWORK_DISPLAY_COUNT).map(toNetworkDisplay)
+      return groups.slice(0, PING_NETWORK_DISPLAY_COUNT)
 
     const selected: typeof groups = []
     const used = new Set<(typeof groups)[number]>()
@@ -277,7 +289,32 @@ export function useNodePingDisplay(
       }
     }
 
-    return selected.map(toNetworkDisplay)
+    return selected
+  })
+
+  const topPingNetworks = computed(() => topPingGroups.value.map(toNetworkDisplay))
+
+  // 有双栈线路时，三网改成 v4 / v6 两行、按线路对齐成列
+  const pingNetworkStackRows = computed<NodePingNetworkStackRow[] | null>(() => {
+    const groups = topPingGroups.value
+    if (!groups.some(group => group.items.some(({ stack }) => stack === 'v6')))
+      return null
+    return (['v4', 'v6'] as const).map(stack => ({
+      stack,
+      cells: groups.map((group) => {
+        // 无后缀任务视为 v4
+        const found = group.items.find(entry => (entry.stack ?? 'v4') === stack)
+        if (!found)
+          return { key: `${group.base}-${stack}`, latency: '--', toneClass: 'text-muted-foreground/60', tooltip: `${group.base} ${pingStackLabel(stack)} 无数据` }
+        const formatted = formatTaskLatency(found.item)
+        return {
+          key: String(found.item.taskId),
+          latency: formatted.latency.replace(MS_SUFFIX_RE, ''),
+          toneClass: formatted.toneClass,
+          tooltip: `${group.base} ${pingStackLabel(stack)} ${formatted.latency}`,
+        }
+      }),
+    }))
   })
 
   return {
@@ -294,5 +331,6 @@ export function useNodePingDisplay(
     lossStackPanel,
     perTaskStats: pingStats.perTaskStats,
     topPingNetworks,
+    pingNetworkStackRows,
   }
 }
