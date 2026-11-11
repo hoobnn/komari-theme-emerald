@@ -1,3 +1,4 @@
+import type { NodeStatusGpu } from '@/utils/rpc'
 /**
  * Komari API 客户端 SDK
  * 基于 REST API 的 Komari 客户端
@@ -119,6 +120,12 @@ export interface RealtimeStatus {
   process: number
   message: string
   updated_at: string
+  /** agent 开启 --gpu 时存在；每个点都带各卡详情（含温度） */
+  gpu?: {
+    count: number
+    average_usage: number
+    detailed_info: NodeStatusGpu[]
+  }
 }
 
 /** WebSocket 实时状态响应 */

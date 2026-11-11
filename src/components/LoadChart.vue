@@ -14,6 +14,7 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useBackgroundSurface } from '@/composables/useBackgroundSurface'
 import { useAppStore } from '@/stores/app'
 import { useNodesStore } from '@/stores/nodes'
+import { getSharedApi } from '@/utils/api'
 import { formatBytes, formatBytesSplit } from '@/utils/helper'
 import { fillMissingTimePoints } from '@/utils/recordHelper'
 import { getSharedRpc } from '@/utils/rpc'
@@ -163,6 +164,28 @@ const nodeInfo = computed(() => nodesStore.nodesByUuid.get(props.uuid))
 
 // RPC 客户端
 const rpc = getSharedRpc()
+const api = getSharedApi()
+
+// 实时视图的各卡温度，按记录时间对齐（RPC 实时记录不带 GPU 详情，REST /recent 每个点都带，且两者时间戳一致）
+const gpuTempsByTime = shallowRef(new Map<string, number[]>())
+
+async function fetchRecentGpuTemps(): Promise<Map<string, number[]>> {
+  if (!nodeInfo.value?.gpu_detailed_info?.length)
+    return new Map()
+  try {
+    const records = await api.getNodeRecentStatus(props.uuid)
+    const map = new Map<string, number[]>()
+    for (const r of records ?? []) {
+      const gpus = r.gpu?.detailed_info
+      if (gpus?.length)
+        map.set(r.updated_at, gpus.map(g => g.temperature))
+    }
+    return map
+  }
+  catch {
+    return new Map()
+  }
+}
 
 // ==================== 数据获取 ====================
 
@@ -203,7 +226,8 @@ async function fetchRecentData() {
   error.value = null
 
   try {
-    const result = await rpc.getNodeRecentStatus(props.uuid)
+    const [result, temps] = await Promise.all([rpc.getNodeRecentStatus(props.uuid), fetchRecentGpuTemps()])
+    gpuTempsByTime.value = temps
     const records = result?.records || []
     records.sort((a, b) => dayjs(a.time).valueOf() - dayjs(b.time).valueOf())
     const maxLength = 150
@@ -473,14 +497,33 @@ function gpuTempClass(temp: number): string {
   return ''
 }
 
-// GPU 图表（聚合使用率）
+// 温度序列：仅实时视图有数据（面板历史记录不存温度）；0 视为无读数
+const gpuTempSeries = computed(() => {
+  if (!isRealtime.value)
+    return []
+  const count = gpuDevices.value.length
+  const series: { name: string, data: (number | null)[] }[] = []
+  for (let i = 0; i < count; i++) {
+    const data = chartData.value.map((r) => {
+      const t = gpuTempsByTime.value.get(r.time)?.[i]
+      return t != null && t > 0 ? t : null
+    })
+    if (data.some(v => v != null))
+      series.push({ name: count > 1 ? `GPU${i} 温度` : '温度', data })
+  }
+  return series
+})
+
+const gpuTempColors = [chartColors.secondary, chartColors.primary, chartColors.quaternary, chartColors.tertiary]
+
+// GPU 图表（聚合使用率 + 实时温度）
 const gpuChartOption = computed(() => ({
   animation: false,
-  color: [chartColors.quinary],
+  color: [chartColors.quinary, ...gpuTempColors],
   tooltip: {
     ...baseTooltipConfig.value,
     formatter: (params: unknown) => {
-      const p = params as Array<{ dataIndex: number, value: number, color: string }>
+      const p = params as Array<{ dataIndex: number, seriesName: string, value: number | null, color: string }>
       const firstParam = p[0]
       if (!firstParam)
         return ''
@@ -489,30 +532,48 @@ const gpuChartOption = computed(() => ({
         return ''
 
       const timeStr = formatTimeForTooltip(record.time, selectedHours.value || 1)
-      const colorDot = `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${firstParam.color};margin-right:8px;flex-shrink:0"></span>`
       let html = `<div style="font-weight:600;margin-bottom:6px;color:${chartThemeColors.value.textSecondary}">${timeStr}</div>`
       html += '<div style="display:flex;flex-direction:column;gap:4px">'
-      html += `<div style="display:flex;align-items:center">${colorDot}<span>GPU</span><span style="margin-left:auto;font-weight:600;margin-left:16px">${firstParam.value?.toFixed(1) ?? '-'}%</span></div>`
+      for (const item of p) {
+        const colorDot = `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${item.color};margin-right:8px;flex-shrink:0"></span>`
+        const value = item.value == null
+          ? '-'
+          : item.seriesName === 'GPU' ? `${item.value.toFixed(1)}%` : `${item.value}°C`
+        html += `<div style="display:flex;align-items:center">${colorDot}<span>${item.seriesName === 'GPU' ? '使用率' : item.seriesName}</span><span style="margin-left:auto;font-weight:600;margin-left:16px">${value}</span></div>`
+      }
       html += '</div>'
       return html
     },
   },
   grid: chartMargin,
   xAxis: baseXAxisConfig.value,
-  yAxis: {
-    ...baseYAxisConfig.value,
-    name: 'GPU %',
-    nameTextStyle: { color: chartThemeColors.value.textSecondary, padding: [0, 40, 0, 0] },
-    min: 0,
-    max: 100,
-    axisLabel: { ...baseYAxisConfig.value.axisLabel, formatter: '{value}%' },
-  },
+  yAxis: [
+    {
+      ...baseYAxisConfig.value,
+      name: 'GPU %',
+      nameTextStyle: { color: chartThemeColors.value.textSecondary, padding: [0, 40, 0, 0] },
+      min: 0,
+      max: 100,
+      axisLabel: { ...baseYAxisConfig.value.axisLabel, formatter: '{value}%' },
+    },
+    {
+      ...baseYAxisConfig.value,
+      show: gpuTempSeries.value.length > 0,
+      name: '温度',
+      nameTextStyle: { color: chartThemeColors.value.textSecondary, padding: [0, 0, 0, 40] },
+      min: 0,
+      max: (v: { max: number }) => Math.max(100, Math.ceil(v.max / 10) * 10),
+      splitLine: { show: false },
+      axisLabel: { ...baseYAxisConfig.value.axisLabel, formatter: '{value}°C' },
+    },
+  ],
   series: [
     {
       name: 'GPU',
       type: 'line',
       data: chartData.value.map(r => r.gpu),
       showSymbol: false,
+      yAxisIndex: 0,
       lineStyle: { width: 1.5, color: chartColors.quinary, cap: 'round' as const },
       areaStyle: {
         color: {
@@ -528,6 +589,15 @@ const gpuChartOption = computed(() => ({
         },
       },
     },
+    ...gpuTempSeries.value.map((t, i) => ({
+      name: t.name,
+      type: 'line',
+      data: t.data,
+      showSymbol: false,
+      connectNulls: true,
+      yAxisIndex: 1,
+      lineStyle: { width: 1.5, color: gpuTempColors[i % gpuTempColors.length], cap: 'round' as const },
+    })),
   ],
 }))
 
@@ -916,6 +986,7 @@ watch(selectedView, () => {
 
 watch(() => props.uuid, () => {
   remoteData.value = []
+  gpuTempsByTime.value = new Map()
   isInitialLoad.value = true // 切换节点时重置首次加载状态
   fetchData()
 })
