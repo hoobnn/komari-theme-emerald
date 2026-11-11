@@ -19,12 +19,15 @@ const {
     <div v-if="topPingNetworks.length > 0" class="flex flex-row">
       <DataTooltip
         v-for="(net, index) in topPingNetworks" :key="net.name" placement="top"
-        :content="`${net.name}\n${net.latency}`"
+        :content="net.tooltip"
         content-class="whitespace-pre-wrap w-max px-1.5 !leading-[1.2] text-[11px]"
       >
         <div class="truncate text-[10px]">
           <span v-if="index" class="mx-1">·</span>
-          <span :class="net.toneClass">{{ net.latency }}</span>
+          <template v-for="(entry, entryIndex) in net.entries" :key="entry.key">
+            <span v-if="entryIndex" class="opacity-40">/</span>
+            <span :class="entry.toneClass">{{ entry.latency }}</span>
+          </template>
         </div>
       </DataTooltip>
     </div>

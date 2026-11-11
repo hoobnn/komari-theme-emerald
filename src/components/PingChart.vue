@@ -11,6 +11,7 @@ import { Spinner } from '@/components/ui/spinner'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useBackgroundSurface } from '@/composables/useBackgroundSurface'
 import { useAppStore } from '@/stores/app'
+import { groupPingTasksByStack, parsePingTaskName, pingStackLabel } from '@/utils/pingStack'
 import {
 
   sortTasksByPublicOrder,
@@ -549,11 +550,21 @@ const showDateInAxis = computed(() => selectedHours.value >= 24)
 
 // ==================== 任务选择 ====================
 
-// 获取任务颜色（根据任务在完整列表中的索引）
+// 双栈：同一线路（如「四川电信 v4 / v6」）共用一个颜色，v6 用虚线区分
+const taskMeta = computed(() => {
+  const meta = new Map<number, { color: string, stack: 'v4' | 'v6' | null, base: string }>()
+  groupPingTasksByStack(tasks.value, t => t.name).forEach((group, groupIndex) => {
+    const color = chartColors[groupIndex % chartColors.length]!
+    for (const { stack, item } of group.items)
+      meta.set(item.id, { color, stack, base: group.base })
+  })
+  return meta
+})
+
+const hasDualStack = computed(() => [...taskMeta.value.values()].some(m => m.stack === 'v6'))
+
 function getTaskColor(taskId: number): string {
-  const taskIndex = tasks.value.findIndex(t => t.id === taskId)
-  const safeIndex = Math.max(0, taskIndex % chartColors.length)
-  return chartColors[safeIndex]!
+  return taskMeta.value.get(taskId)?.color ?? chartColors[0]!
 }
 
 // 最新值统计（从服务端 tasks 获取，保持颜色顺序）
@@ -572,15 +583,19 @@ const latestValues = computed(() => {
     }
   }
 
-  return tasks.value.map((task, idx) => {
-    const safeIdx = Math.max(0, idx % chartColors.length)
+  return tasks.value.map((task) => {
+    const meta = taskMeta.value.get(task.id)
     return {
       ...task,
       latestValue: latestMap.get(task.id) ?? null,
-      color: chartColors[safeIdx]!,
+      color: meta?.color ?? chartColors[0]!,
+      stack: meta?.stack ?? null,
     }
   })
 })
+
+// 统计卡片按线路分组，组内 v4 / v6 各占一行
+const latestValueGroups = computed(() => groupPingTasksByStack(latestValues.value, t => t.name))
 
 const selectedTasks = computed(() => {
   return tasks.value.filter(t => selectedTaskIds.value.includes(t.id))
@@ -674,6 +689,25 @@ function hideAllTasks() {
   selectedTaskIds.value = []
 }
 
+// 只看某个协议栈：v4 同时包含未标注协议栈的任务
+function showStackTasks(stack: 'v4' | 'v6') {
+  selectedTaskIds.value = tasks.value
+    .filter((t) => {
+      const taskStack = parsePingTaskName(t.name).stack
+      return stack === 'v6' ? taskStack === 'v6' : taskStack !== 'v6'
+    })
+    .map(t => t.id)
+}
+
+function isStackSelected(stack: 'v4' | 'v6'): boolean {
+  if (!selectedTaskIds.value.length)
+    return false
+  return selectedTaskIds.value.every((id) => {
+    const taskStack = taskMeta.value.get(id)?.stack ?? null
+    return stack === 'v6' ? taskStack === 'v6' : taskStack !== 'v6'
+  })
+}
+
 // ==================== 图表配置 ====================
 
 // 通用 Tooltip 配置
@@ -714,6 +748,7 @@ const pingChartOption = computed(() => {
   // 构建 series，确保颜色与卡片一致
   const series = taskList.map((task) => {
     const color = getTaskColor(task.id)
+    const isV6 = taskMeta.value.get(task.id)?.stack === 'v6'
     const lossMarkerIndexes = packetLossMarkers.value.get(task.id) || []
     return {
       name: task.name,
@@ -722,7 +757,7 @@ const pingChartOption = computed(() => {
       smooth: showDelay.value ? (cutPeak.value ? 0.6 : 0.1) : 0,
       showSymbol: false,
       connectNulls: false,
-      lineStyle: { width: showDelay.value ? 1.5 : 0, color, cap: 'round' as const },
+      lineStyle: { width: showDelay.value ? 1.5 : 0, color, cap: 'round' as const, type: isV6 ? 'dashed' as const : 'solid' as const },
       itemStyle: { color, opacity: showDelay.value ? 1 : 0 },
       markLine: showLoss.value && lossMarkerIndexes.length
         ? {
@@ -733,7 +768,7 @@ const pingChartOption = computed(() => {
             lineStyle: {
               color,
               width: 1,
-              type: 'solid' as const,
+              type: isV6 ? 'dashed' as const : 'solid' as const,
               opacity: 0.55,
             },
             data: lossMarkerIndexes.map(index => ({
@@ -746,18 +781,12 @@ const pingChartOption = computed(() => {
 
   // 颜色映射表（用于 Tooltip）
   const colorMap = new Map<number, string>()
-  tasks.value.forEach((task, idx) => {
-    const safeIdx = Math.max(0, idx % chartColors.length)
-    colorMap.set(task.id, chartColors[safeIdx]!)
-  })
+  tasks.value.forEach(task => colorMap.set(task.id, getTaskColor(task.id)))
 
   return {
     animation: false,
     // 全局颜色设置（用于图例等）
-    color: tasks.value.map((_, idx) => {
-      const safeIdx = Math.max(0, idx % chartColors.length)
-      return chartColors[safeIdx]!
-    }),
+    color: tasks.value.map(task => getTaskColor(task.id)),
     tooltip: {
       ...baseTooltipConfig.value,
       formatter: (params: unknown) => {
@@ -784,7 +813,10 @@ const pingChartOption = computed(() => {
             // 通过任务名找到对应的任务ID，再获取颜色
             const task = tasks.value.find(t => t.name === item.seriesName)
             const color = task ? colorMap.get(task.id) || chartColors[0] : chartColors[0]
-            const colorDot = `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${color};margin-right:8px;flex-shrink:0"></span>`
+            const isV6 = task ? taskMeta.value.get(task.id)?.stack === 'v6' : false
+            const colorDot = isV6
+              ? `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;border:2px solid ${color};box-sizing:border-box;margin-right:8px;flex-shrink:0"></span>`
+              : `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${color};margin-right:8px;flex-shrink:0"></span>`
             html += `<div style="display:flex;align-items:center">${colorDot}<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${item.seriesName}</span><span style="margin-left:auto;font-weight:600;margin-left:16px;font-variant-numeric:tabular-nums">${Math.round(item.value)} ms</span></div>`
           }
         }
@@ -881,6 +913,22 @@ onMounted(() => {
       </div>
       <div class="md:flex-1" />
       <div class="flex gap-2 items-center">
+        <template v-if="hasDualStack">
+          <Button
+            variant="ghost" size="xs" class="h-7 rounded-sm border-none bg-background/60 hover:bg-background"
+            :class="[isStackSelected('v4') && 'bg-background !text-emerald-600']"
+            @click="showStackTasks('v4')"
+          >
+            IPv4
+          </Button>
+          <Button
+            variant="ghost" size="xs" class="h-7 rounded-sm border-none bg-background/60 hover:bg-background"
+            :class="[isStackSelected('v6') && 'bg-background !text-emerald-600']"
+            @click="showStackTasks('v6')"
+          >
+            IPv6
+          </Button>
+        </template>
         <Button
           variant="ghost" size="xs" class="h-7 rounded-sm border-none bg-background/60 hover:bg-background"
           :class="[selectedTaskIds.length === tasks.length && 'bg-background !text-emerald-600']"
@@ -908,87 +956,95 @@ onMounted(() => {
       </div>
 
       <template v-else>
-        <!-- 最新值统计卡片（可点击切换选中状态） -->
+        <!-- 最新值统计卡片：按线路分组，组内每个协议栈一行（点击行切换选中） -->
         <div
-          v-if="latestValues.length > 0" class="gap-3 grid"
-          style="grid-template-columns: repeat(auto-fit, minmax(180px, 1fr))"
+          v-if="latestValueGroups.length > 0" class="gap-3 grid"
+          style="grid-template-columns: repeat(auto-fit, minmax(200px, 1fr))"
         >
           <div
-            v-for="task in latestValues" :key="task.id"
-            class="flex cursor-pointer select-none items-center gap-3 rounded-md p-2 transition-all bg-background/60 hover:bg-background hover:shadow-[0_0_0_1px] hover:shadow-emerald-600/10"
-            :class="[
-              !selectedTaskIds.includes(task.id) && 'opacity-30',
-            ]"
-            :onmouseover="(e: MouseEvent) => ((e.currentTarget as HTMLElement).style.borderColor = task.color)"
-            :onmouseout="(e: MouseEvent) => ((e.currentTarget as HTMLElement).style.borderColor = '')"
-            @click="toggleTask(task.id)"
+            v-for="group in latestValueGroups" :key="group.base"
+            class="flex flex-col gap-1 rounded-md p-2 transition-all bg-background/60 hover:bg-background hover:shadow-[0_0_0_1px] hover:shadow-emerald-600/10"
           >
-            <div class="flex-1 min-w-0">
-              <div class="flex gap-2 items-center">
-                <div class="rounded h-4 w-1" :style="{ backgroundColor: task.color }" />
-                <span class="text-sm font-semibold truncate">{{ task.name }}</span>
-                <div class="flex-1" />
-                <DataTooltip placement="left" content-class="!rounded p-3 w-60 backdrop-blur">
-                  <Button variant="ghost" size="icon-xs" class="text-slate-500" @click.stop>
-                    <Icon icon="carbon:information" :width="14" :height="14" />
-                  </Button>
-                  <template #content>
-                    <div class="text-xs gap-x-4 gap-y-1.5 grid grid-cols-4">
-                      <template v-if="task.min !== undefined">
-                        <span class="text-muted-foreground">最小</span>
-                        <span class="font-medium">{{ Math.round(task.min) }} ms</span>
-                      </template>
-                      <template v-if="task.max !== undefined">
-                        <span class="text-muted-foreground">最大</span>
-                        <span class="font-medium">{{ Math.round(task.max) }} ms</span>
-                      </template>
-                      <template v-if="task.avg !== undefined">
-                        <span class="text-muted-foreground">平均</span>
-                        <span class="font-medium">{{ Math.round(task.avg) }} ms</span>
-                      </template>
-                      <template v-if="task.latest !== undefined">
-                        <span class="text-muted-foreground">最新</span>
-                        <span class="font-medium">{{ Math.round(task.latest) }} ms</span>
-                      </template>
-                      <template v-if="task.p50 !== undefined">
-                        <span class="text-muted-foreground">P50</span>
-                        <span class="font-medium">{{ Math.round(task.p50) }} ms</span>
-                      </template>
-                      <template v-if="task.p99 !== undefined">
-                        <span class="text-muted-foreground">P99</span>
-                        <span class="font-medium">{{ Math.round(task.p99) }} ms</span>
-                      </template>
-                      <template v-if="task.p99_p50_ratio !== undefined">
-                        <span class="text-muted-foreground">波动率</span>
-                        <span class="font-medium">{{ task.p99_p50_ratio.toFixed(2) }}</span>
-                      </template>
-                      <template v-if="task.interval !== undefined">
-                        <span class="text-muted-foreground">间隔</span>
-                        <span class="font-medium">{{ task.interval }}s</span>
-                      </template>
-                      <template v-if="task.type">
-                        <span class="text-muted-foreground">类型</span>
-                        <span class="font-medium">{{ task.type.toUpperCase() }}</span>
-                      </template>
-                      <template v-if="task.total !== undefined">
-                        <span class="text-muted-foreground">总数</span>
-                        <span class="font-medium">{{ task.total }}</span>
-                      </template>
-                    </div>
-                  </template>
-                </DataTooltip>
-              </div>
-              <div class="text-xs mt-1 flex gap-1.5 items-center text-muted-foreground">
-                <span class="font-medium" title="平均延迟">
-                  {{ task.avg !== undefined ? `${Math.round(task.avg)}ms` : '-' }}
-                </span>
+            <div class="flex gap-2 items-center">
+              <div class="rounded h-4 w-1" :style="{ backgroundColor: group.items[0]?.item.color }" />
+              <span class="text-sm font-semibold truncate">{{ group.base }}</span>
+            </div>
+            <div
+              v-for="{ stack, item: task } in group.items" :key="task.id"
+              class="flex cursor-pointer select-none items-center gap-1.5 rounded-sm text-xs text-muted-foreground transition-opacity"
+              :class="[!selectedTaskIds.includes(task.id) && 'opacity-30']"
+              @click="toggleTask(task.id)"
+            >
+              <span
+                v-if="stack"
+                class="w-8 shrink-0 rounded-sm border px-1 text-center text-[10px] leading-4"
+                :class="stack === 'v6' ? 'border-dashed' : ''"
+                :style="{ borderColor: task.color, color: task.color }"
+              >{{ stack === 'v6' ? 'v6' : 'v4' }}</span>
+              <span class="font-medium" title="平均延迟">
+                {{ task.avg !== undefined ? `${Math.round(task.avg)}ms` : '-' }}
+              </span>
+              <span class="opacity-60">·</span>
+              <span title="丢包率">{{ task.loss.toFixed(2) }}%</span>
+              <template v-if="task.p99_p50_ratio !== undefined">
                 <span class="opacity-60">·</span>
-                <span title="丢包率">{{ task.loss.toFixed(2) }}%</span>
-                <template v-if="task.p99_p50_ratio !== undefined">
-                  <span class="opacity-60">·</span>
-                  <span title="波动率">{{ task.p99_p50_ratio.toFixed(2) }}</span>
+                <span title="波动率">{{ task.p99_p50_ratio.toFixed(2) }}</span>
+              </template>
+              <div class="flex-1" />
+              <DataTooltip placement="left" content-class="!rounded p-3 w-60 backdrop-blur">
+                <Button variant="ghost" size="icon-xs" class="text-slate-500" @click.stop>
+                  <Icon icon="carbon:information" :width="14" :height="14" />
+                </Button>
+                <template #content>
+                  <div class="mb-2 text-xs font-semibold">
+                    {{ task.name }}<template v-if="stack">
+                      （{{ pingStackLabel(stack) }}）
+                    </template>
+                  </div>
+                  <div class="text-xs gap-x-4 gap-y-1.5 grid grid-cols-4">
+                    <template v-if="task.min !== undefined">
+                      <span class="text-muted-foreground">最小</span>
+                      <span class="font-medium">{{ Math.round(task.min) }} ms</span>
+                    </template>
+                    <template v-if="task.max !== undefined">
+                      <span class="text-muted-foreground">最大</span>
+                      <span class="font-medium">{{ Math.round(task.max) }} ms</span>
+                    </template>
+                    <template v-if="task.avg !== undefined">
+                      <span class="text-muted-foreground">平均</span>
+                      <span class="font-medium">{{ Math.round(task.avg) }} ms</span>
+                    </template>
+                    <template v-if="task.latest !== undefined">
+                      <span class="text-muted-foreground">最新</span>
+                      <span class="font-medium">{{ Math.round(task.latest) }} ms</span>
+                    </template>
+                    <template v-if="task.p50 !== undefined">
+                      <span class="text-muted-foreground">P50</span>
+                      <span class="font-medium">{{ Math.round(task.p50) }} ms</span>
+                    </template>
+                    <template v-if="task.p99 !== undefined">
+                      <span class="text-muted-foreground">P99</span>
+                      <span class="font-medium">{{ Math.round(task.p99) }} ms</span>
+                    </template>
+                    <template v-if="task.p99_p50_ratio !== undefined">
+                      <span class="text-muted-foreground">波动率</span>
+                      <span class="font-medium">{{ task.p99_p50_ratio.toFixed(2) }}</span>
+                    </template>
+                    <template v-if="task.interval !== undefined">
+                      <span class="text-muted-foreground">间隔</span>
+                      <span class="font-medium">{{ task.interval }}s</span>
+                    </template>
+                    <template v-if="task.type">
+                      <span class="text-muted-foreground">类型</span>
+                      <span class="font-medium">{{ task.type.toUpperCase() }}</span>
+                    </template>
+                    <template v-if="task.total !== undefined">
+                      <span class="text-muted-foreground">总数</span>
+                      <span class="font-medium">{{ task.total }}</span>
+                    </template>
+                  </div>
                 </template>
-              </div>
+              </DataTooltip>
             </div>
           </div>
         </div>

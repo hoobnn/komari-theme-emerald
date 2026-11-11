@@ -4,11 +4,14 @@ import { computed, toValue } from 'vue'
 import { NODE_PING_BAR_COUNT, useNodePingStats } from '@/composables/useNodePingStats'
 import { useAppStore } from '@/stores/app'
 import { formatDateTime } from '@/utils/helper'
+import { groupPingTasksByStack, pingStackLabel } from '@/utils/pingStack'
 
 export type NodePingMetric = 'latency' | 'loss'
 
 // getRecords 在新版主控中返回的是近期可用样本，不保证覆盖完整 1 小时。
 const RECENT_PING_RECORDS_QUERY_HOURS = 1
+
+const MS_SUFFIX_RE = /ms$/
 
 // 三网延迟固定展示的记录数量
 const PING_NETWORK_DISPLAY_COUNT = 3
@@ -19,10 +22,17 @@ export interface NodePingBar {
   tooltip: string
 }
 
-interface NodePingNetworkDisplay {
-  name: string
+interface NodePingNetworkEntry {
+  key: string
   latency: string
   toneClass: string
+}
+
+interface NodePingNetworkDisplay {
+  name: string
+  /** 同一线路的各协议栈（v4 在前、v6 在后）；单栈任务只有一项 */
+  entries: NodePingNetworkEntry[]
+  tooltip: string
 }
 
 interface UseNodePingDisplayOptions {
@@ -71,11 +81,27 @@ function getLossToneClass(loss: number): string {
   return 'bg-rose-500/80'
 }
 
-function toNetworkDisplay(stat: NodePingPerTaskStat): NodePingNetworkDisplay {
+function formatTaskLatency(stat: NodePingPerTaskStat): { latency: string, toneClass: string } {
   return {
-    name: stat.name,
     latency: stat.avgLatency >= 0 ? `${Math.round(stat.avgLatency)}ms` : '--',
     toneClass: stat.avgLatency >= 0 ? getPingToneClass(stat.avgLatency) : 'text-rose-500',
+  }
+}
+
+function toNetworkDisplay(group: { base: string, items: Array<{ stack: 'v4' | 'v6' | null, item: NodePingPerTaskStat }> }): NodePingNetworkDisplay {
+  // 多栈时只在最后一个值后带单位：35/38ms
+  const entries = group.items.map(({ item }, index) => {
+    const formatted = formatTaskLatency(item)
+    const latency = index < group.items.length - 1 ? formatted.latency.replace(MS_SUFFIX_RE, '') : formatted.latency
+    return { key: String(item.taskId), latency, toneClass: formatted.toneClass }
+  })
+  const lines = group.items.length > 1
+    ? group.items.map(({ stack, item }) => `${pingStackLabel(stack) || item.name} ${formatTaskLatency(item).latency}`)
+    : [entries[0]?.latency ?? '--']
+  return {
+    name: group.base,
+    entries,
+    tooltip: [group.base, ...lines].join('\n'),
   }
 }
 
@@ -183,35 +209,35 @@ export function useNodePingDisplay(
   })
 
   const topPingNetworks = computed(() => {
-    const perTaskStats = pingStats.perTaskStats.value
+    // 先按双栈后缀把同一线路的 v4 / v6 合成一组，再按组取前 3 条
+    const groups = groupPingTasksByStack(pingStats.perTaskStats.value, stat => stat.name)
     const configuredNames = appStore.pingNetworkOrder
 
-    // 未配置自定义顺序时保持默认行为：按 taskId 顺序取前 3 条
+    // 未配置自定义顺序时保持默认行为：按后台顺序取前 3 组
     if (!configuredNames.length)
-      return perTaskStats.slice(0, PING_NETWORK_DISPLAY_COUNT).map(toNetworkDisplay)
+      return groups.slice(0, PING_NETWORK_DISPLAY_COUNT).map(toNetworkDisplay)
 
-    const statsByName = new Map(perTaskStats.map(stat => [stat.name, stat]))
-    const selected: NodePingPerTaskStat[] = []
-    const usedTaskIds = new Set<number>()
+    const selected: typeof groups = []
+    const used = new Set<(typeof groups)[number]>()
 
-    // 按配置顺序精确匹配节点名称，最多取 3 条
+    // 按配置顺序匹配：既可以写分组名（四川电信），也可以写完整任务名（四川电信 v4）
     for (const name of configuredNames) {
       if (selected.length >= PING_NETWORK_DISPLAY_COUNT)
         break
-      const stat = statsByName.get(name)
-      if (stat && !usedTaskIds.has(stat.taskId)) {
-        selected.push(stat)
-        usedTaskIds.add(stat.taskId)
+      const group = groups.find(g => !used.has(g) && (g.base === name || g.items.some(({ item }) => item.name === name)))
+      if (group) {
+        selected.push(group)
+        used.add(group)
       }
     }
 
-    // 不足 3 条时用剩余任务（taskId 升序）补位
-    for (const stat of perTaskStats) {
+    // 不足 3 组时用剩余分组按后台顺序补位
+    for (const group of groups) {
       if (selected.length >= PING_NETWORK_DISPLAY_COUNT)
         break
-      if (!usedTaskIds.has(stat.taskId)) {
-        selected.push(stat)
-        usedTaskIds.add(stat.taskId)
+      if (!used.has(group)) {
+        selected.push(group)
+        used.add(group)
       }
     }
 
