@@ -203,7 +203,7 @@ export function useNodePingDisplay(
     const format = (stack: 'v4' | 'v6') => metric === 'latency'
       ? `${Math.round(byStack[stack].avgLatency)}`
       : byStack[stack].avgLoss.toFixed(1)
-    const unit = metric === 'latency' ? ' ms' : '%'
+    const unit = metric === 'latency' ? 'ms' : '%'
     const title = metric === 'latency' ? '平均延迟' : '平均丢包'
     return {
       tooltip: stacks.map(stack => `${pingStackLabel(stack)} ${title} ${format(stack)}${unit}`).join('\n'),
@@ -294,6 +294,17 @@ export function useNodePingDisplay(
 
   const topPingNetworks = computed(() => topPingGroups.value.map(toNetworkDisplay))
 
+  // 表头：去掉各线路名的公共前缀（四川电信 / 四川联通 → 电信 / 联通）
+  const pingNetworkHeaders = computed(() => {
+    const names = topPingGroups.value.map(group => group.base)
+    if (names.length < 2)
+      return names
+    let prefix = 0
+    while (names.every(name => name.length > prefix + 1 && name[prefix] === names[0]![prefix]))
+      prefix += 1
+    return names.map(name => name.slice(prefix).trim() || name)
+  })
+
   // 有双栈线路时，三网改成 v4 / v6 两行、按线路对齐成列
   const pingNetworkStackRows = computed<NodePingNetworkStackRow[] | null>(() => {
     const groups = topPingGroups.value
@@ -332,5 +343,6 @@ export function useNodePingDisplay(
     perTaskStats: pingStats.perTaskStats,
     topPingNetworks,
     pingNetworkStackRows,
+    pingNetworkHeaders,
   }
 }
