@@ -54,6 +54,10 @@ const chartColors = [
   '#FB923C', // 橙色
 ]
 
+// 双栈时 v6 用同色系的另一档，与 v4 拉开明度差（顺序与 chartColors 对应）：亮色模式取 700-800 深色，暗色模式取 600 饱和色（浅色在深底上会发白、各线路分不清）
+const chartColorsV6Light = ['#9F1239', '#0F766E', '#6D28D9', '#1D4ED8', '#B45309', '#BE185D', '#047857', '#C2410C']
+const chartColorsV6Dark = ['#E11D48', '#0D9488', '#7C3AED', '#2563EB', '#D97706', '#DB2777', '#059669', '#EA580C']
+
 // 从 publicSettings 获取记录保留时间
 const maxPingRecordPreserveTime = computed(() => appStore.publicSettings?.ping_record_preserve_time || 168)
 
@@ -550,13 +554,16 @@ const showDateInAxis = computed(() => selectedHours.value >= 24)
 
 // ==================== 任务选择 ====================
 
-// 双栈：同一线路（如「四川电信 v4 / v6」）共用一个颜色，v6 用虚线区分
+// 双栈：同一线路（如「四川电信 v4 / v6」）用同色系，v6 换深浅一档并用虚线
 const taskMeta = computed(() => {
   const meta = new Map<number, { color: string, stack: 'v4' | 'v6' | null, base: string }>()
   groupPingTasksByStack(tasks.value, t => t.name).forEach((group, groupIndex) => {
-    const color = chartColors[groupIndex % chartColors.length]!
-    for (const { stack, item } of group.items)
+    const paletteIndex = groupIndex % chartColors.length
+    const v6Palette = isDark.value ? chartColorsV6Dark : chartColorsV6Light
+    for (const { stack, item } of group.items) {
+      const color = stack === 'v6' ? v6Palette[paletteIndex]! : chartColors[paletteIndex]!
       meta.set(item.id, { color, stack, base: group.base })
+    }
   })
   return meta
 })
